@@ -93,7 +93,7 @@ static int cleanup_test(struct unit_test *test)
 #define CPUHOLD_STACK_SZ (512 + CONFIG_TEST_EXTRA_STACKSIZE)
 
 static struct k_thread cpuhold_threads[NUM_CPUHOLD];
-K_THREAD_STACK_ARRAY_DEFINE(cpuhold_stacks, NUM_CPUHOLD, CPUHOLD_STACK_SZ);
+K_KERNEL_STACK_ARRAY_DEFINE(cpuhold_stacks, NUM_CPUHOLD, CPUHOLD_STACK_SZ);
 static struct k_sem cpuhold_sem;
 volatile int cpuhold_active;
 
@@ -130,17 +130,27 @@ static void cpu_hold(void *arg1, void *arg2, void *arg3)
 void z_impl_z_test_1cpu_start(void)
 {
 	cpuhold_active = 1;
-
+#ifdef CONFIG_THREAD_NAME
+	char tname[CONFIG_THREAD_MAX_NAME_LEN];
+#endif
 	k_sem_init(&cpuhold_sem, 0, 999);
 
 	/* Spawn N-1 threads to "hold" the other CPUs, waiting for
 	 * each to signal us that it's locked and spinning.
+	 *
+	 * Note that NUM_CPUHOLD can be a value that causes coverity
+	 * to flag the following loop as DEADCODE so suppress the warning.
 	 */
+	/* coverity[DEADCODE] */
 	for (int i = 0; i < NUM_CPUHOLD; i++)  {
 		k_thread_create(&cpuhold_threads[i],
 				cpuhold_stacks[i], CPUHOLD_STACK_SZ,
 				(k_thread_entry_t) cpu_hold, NULL, NULL, NULL,
 				K_HIGHEST_THREAD_PRIO, 0, K_NO_WAIT);
+#ifdef CONFIG_THREAD_NAME
+		snprintk(tname, CONFIG_THREAD_MAX_NAME_LEN, "cpuhold%02d", i);
+		k_thread_name_set(&cpuhold_threads[i], tname);
+#endif
 		k_sem_take(&cpuhold_sem, K_FOREVER);
 	}
 }
@@ -149,6 +159,10 @@ void z_impl_z_test_1cpu_stop(void)
 {
 	cpuhold_active = 0;
 
+	/* Note that NUM_CPUHOLD can be a value that causes coverity
+	 * to flag the following loop as DEADCODE so suppress the warning.
+	 */
+	/* coverity[DEADCODE] */
 	for (int i = 0; i < NUM_CPUHOLD; i++)  {
 		k_thread_abort(&cpuhold_threads[i]);
 	}
@@ -320,6 +334,7 @@ static int run_test(struct unit_test *test)
 			test->thread_options | K_INHERIT_PERMS,
 				K_NO_WAIT);
 
+	k_thread_name_set(&ztest_thread, "ztest_thread");
 	k_thread_join(&ztest_thread, K_FOREVER);
 
 	phase = TEST_PHASE_TEARDOWN;
